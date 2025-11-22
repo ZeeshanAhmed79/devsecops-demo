@@ -1,49 +1,73 @@
-// src/game.js
-const WINNING_LINES = [
-  [0,1,2],[3,4,5],[6,7,8], // rows
-  [0,3,6],[1,4,7],[2,5,8], // cols
-  [0,4,8],[2,4,6]          // diags
-];
+// src/index.js
+const express = require('express');
+const { nanoid } = require('nanoid');
+const { createGame, makeMove } = require('./game');
 
-function createGame(playerX = 'X', playerO = 'O') {
-  return {
-    id: null,
-    board: Array(9).fill(null),
-    next: 'X',
-    winner: null,
-    moves: 0,
-    players: { X: playerX, O: playerO },
-    createdAt: new Date().toISOString()
-  };
-}
+const app = express();
+app.use(express.json());
 
-function makeMove(game, index) {
-  if (!game) throw new Error('Game not found');
-  if (game.winner) throw new Error('Game already finished');
-  if (index < 0 || index > 8) throw new Error('Invalid index');
-  if (game.board[index] !== null) throw new Error('Cell already taken');
+const PORT = process.env.PORT || 3000;
 
-  game.board[index] = game.next;
-  game.moves += 1;
+// in-memory store
+const games = new Map();
 
-  // check winner
-  for (const line of WINNING_LINES) {
-    const [a,b,c] = line;
-    if (game.board[a] && game.board[a] === game.board[b] && game.board[a] === game.board[c]) {
-      game.winner = game.board[a];
-      return game;
-    }
+/**
+ * Create a new game
+ * POST /games
+ * body: { playerX?: string, playerO?: string }
+ */
+app.post('/games', (req, res) => {
+  const { playerX, playerO } = req.body || {};
+  const game = createGame(playerX || 'X', playerO || 'O');
+  game.id = nanoid(8);
+  games.set(game.id, game);
+  res.status(201).json(game);
+});
+
+/**
+ * Get game state
+ * GET /games/:id
+ */
+app.get('/games/:id', (req, res) => {
+  const game = games.get(req.params.id);
+  if (!game) return res.status(404).json({ error: 'Game not found' });
+  res.json(game);
+});
+
+/**
+ * Make a move
+ * POST /games/:id/move
+ * body: { index: number }
+ */
+app.post('/games/:id/move', (req, res) => {
+  try {
+    const game = games.get(req.params.id);
+    if (!game) return res.status(404).json({ error: 'Game not found' });
+    const { index } = req.body ?? {};
+    if (typeof index !== 'number') return res.status(400).json({ error: 'index (number) required' });
+    makeMove(game, index);
+    res.json(game);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
   }
+});
 
-  // draw?
-  if (game.moves >= 9) {
-    game.winner = 'draw';
-    return game;
-  }
+/**
+ * List games (brief)
+ * GET /games
+ */
+app.get('/games', (req, res) => {
+  const list = Array.from(games.values()).map(g => ({
+    id: g.id,
+    createdAt: g.createdAt,
+    winner: g.winner,
+    next: g.next
+  }));
+  res.json(list);
+});
 
-  // switch
-  game.next = game.next === 'X' ? 'O' : 'X';
-  return game;
-}
+app.listen(PORT, () => {
+  console.log(`TicTacToe backend listening on :${PORT}`);
+});
 
-module.exports = { createGame, makeMove };
+module.exports = app; // for tests
